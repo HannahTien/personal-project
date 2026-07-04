@@ -1,0 +1,39 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="max-w-3xl mx-auto p-8 mt-10 bg-cardbg border border-highlight rounded-2xl shadow-[0_0_20px_rgba(77,148,255,0.15)] text-center">
+    <h2 class="text-3xl font-wenkai font-normal mb-6 text-white tracking-wide">歷屆數學會考試題</h2>
+    
+    <p class="text-gray-300 mb-6 text-lg">請選擇您要下載的年份：</p>
+    
+    <select id="yearSelect" class="w-2/3 max-w-md p-3 bg-gray-900 border border-gray-600 rounded-lg text-lg text-white mb-8 focus:ring-2 focus:ring-highlight focus:outline-none">
+        <option value="">-- 請選擇年份 --</option>
+        {% for paper in papers %}
+            <option value="{{ paper.pdf_url }}">{{ paper.year }} 數學科試題</option>
+        {% endfor %}
+    </select>
+
+    <div id="downloadArea" class="hidden mb-10">
+        <a id="downloadBtn" href="#" target="_blank" class="inline-block bg-highlight text-white font-bold py-3 px-8 rounded-full hover:bg-blue-400 hover:scale-105 transition duration-300 shadow-lg">
+            <i class="fa-solid fa-file-pdf mr-2"></i>下載試題 PDF
+        </a>
+    </div>
+
+</div>
+
+<script>
+    const yearSelect = document.getElementById('yearSelect');
+    const downloadArea = document.getElementById('downloadArea');
+    const downloadBtn = document.getElementById('downloadBtn');
+
+    yearSelect.addEventListener('change', function() {
+        const selectedUrl = this.value;
+        if (selectedUrl) {
+            downloadBtn.href = selectedUrl;
+            downloadArea.classList.remove('hidden');
+        } else {
+            downloadArea.classList.add('hidden');
+        }
+    });
+</script>
+{% endblock %}

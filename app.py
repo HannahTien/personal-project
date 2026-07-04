@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import Select
 
 load_dotenv()
 app = Flask(__name__)
@@ -16,7 +17,7 @@ if api_key:
     genai.configure(api_key=api_key)
     model = genai.GenerativeModel('gemini-2.5-flash')
 
-app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('RENDER_DB_URL')
+app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('RENDER_DB_URL', 'sqlite:///local.db') 
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 
@@ -26,6 +27,12 @@ class MathFormula(db.Model):
     title = db.Column(db.String(255))
     content = db.Column(db.Text)
     created_at = db.Column(db.DateTime, default=db.func.current_timestamp())
+
+class ExamPaper(db.Model):
+    __tablename__ = 'exam_papers'
+    id = db.Column(db.Integer, primary_key=True)
+    year = db.Column(db.String(50))       
+    pdf_url = db.Column(db.String(500))   
 
 with app.app_context():
     db.create_all()
@@ -45,6 +52,12 @@ def physics():
 @app.route('/favorites')
 def favorites():
     return render_template('favorites.html')
+
+@app.route('/exams')
+def exams():  # 直接把原本的 exams_page 改成 exams
+    papers = ExamPaper.query.order_by(ExamPaper.id.desc()).all()
+    return render_template('exams.html', papers=papers)
+
 
 @app.route('/api/chat', methods=['POST'])
 def chat():
@@ -67,7 +80,6 @@ def chat():
     3. 如果是真實的計算題，引導學生思考該用什麼公式，並解釋公式代號，但不要直接給出最終答案。
     4. 格式限制：絕對禁止使用 LaTeX 語法（不要出現任何 $ 符號）。公式請一律使用純文字，例如：W = m * g。
     """
-
     try:
         response = model.generate_content(prompt)
         return jsonify({"reply": response.text})
@@ -76,7 +88,7 @@ def chat():
 
 @app.route('/crawl')
 def crawl_formulas():
-    print("啟動 Selenium 爬蟲...")
+    print("啟動 Selenium 爬蟲 (Scribd)...")
     options = Options()
     options.binary_location = "/usr/bin/chromium" 
     options.add_argument("--headless=new")
@@ -96,22 +108,16 @@ def crawl_formulas():
             time.sleep(1.5)
             
         elements = driver.find_elements(By.CSS_SELECTOR, ".text_layer span")
-        extracted_text = ""
-        for el in elements:
-            text = el.text.strip()
-            if text:
-                extracted_text += text + " "
+        extracted_text = " ".join([el.text.strip() for el in elements if el.text.strip()])
                 
         if extracted_text:
             MathFormula.query.delete() 
             new_data = MathFormula(title="Scribd國中數學公式整理", content=extracted_text)
             db.session.add(new_data)
             db.session.commit()
-            print("🎉 雲端資料庫更新成功！")
-            return "Crawl Success! 爬蟲成功並已存入資料庫！"
+            return "Crawl Success! Scribd 文本爬蟲成功並已存入資料庫！"
         else:
             return "⚠️ 未擷取到文字，請檢查網頁。"
-
     except Exception as e:
         return f"爬蟲發生錯誤：{e}"
     finally:
@@ -120,60 +126,97 @@ def crawl_formulas():
 @app.route('/analyze')
 def analyze_data():
     latest_data = MathFormula.query.order_by(MathFormula.created_at.desc()).first()
-    
     if not latest_data or not latest_data.content:
         return "<h3>⚠️ 目前雲端資料庫沒有文本可供分析，請先前往 /crawl 執行爬蟲。</h3>"
         
     text_content = latest_data.content
-    
     keywords = ["方程式", "三角形", "面積", "函數", "相似", "機率", "圓周率", "絕對值", "平方根", "多項式", "幾何", "座標"]
 
-    analysis_result = {}
-    for word in keywords:
-        count = text_content.count(word)
-        if count > 0:
-            analysis_result[word] = count
-            
+    analysis_result = {word: text_content.count(word) for word in keywords if text_content.count(word) > 0}
     sorted_result = sorted(analysis_result.items(), key=lambda x: x[1], reverse=True)
     
     html = """
     <div style="font-family: sans-serif; max-width: 800px; margin: 40px auto; padding: 20px; border: 1px solid #ddd; border-radius: 10px; box-shadow: 0 4px 8px rgba(0,0,0,0.1);">
         <h2 style="color: #2c3e50;">📊 國中數學公式庫：核心概念詞頻分析報表</h2>
-        <p style="color: #555; line-height: 1.6;">
-            本系統對爬蟲取得之無結構化數學文本進行了關鍵字萃取與特徵分析。此量化數據可作為評估各章節公式比重之依據，展現了資料科學與數學專業之結合。
-        </p>
-        <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;">
+        <p style="color: #555; line-height: 1.6;">本系統對爬蟲取得之文本進行了關鍵字萃取與特徵分析。</p>
         <table style="width: 100%; border-collapse: collapse; text-align: left;">
-            <tr style="background-color: #f8f9fa; border-bottom: 2px solid #ccc;">
-                <th style="padding: 12px;">數學概念關鍵字</th>
-                <th style="padding: 12px;">出現次數 (Frequency)</th>
-                <th style="padding: 12px; width: 50%;">權重佔比直方圖</th>
-            </tr>
     """
-    
     max_count = sorted_result[0][1] if sorted_result else 1
-    
     for word, count in sorted_result:
         bar_width = int((count / max_count) * 100)
         html += f"""
             <tr style="border-bottom: 1px solid #eee;">
-                <td style="padding: 12px; font-weight: bold; color: #34495e;">{word}</td>
+                <td style="padding: 12px; font-weight: bold;">{word}</td>
                 <td style="padding: 12px;">{count} 次</td>
-                <td style="padding: 12px;">
+                <td style="padding: 12px; width: 50%;">
                     <div style="background-color: #3498db; height: 18px; width: {bar_width}%; border-radius: 3px;"></div>
                 </td>
             </tr>
         """
-        
-    html += """
-        </table>
-        <p style="margin-top: 20px; font-size: 14px; color: #7f8c8d; text-align: right;">
-            <i>* 分析模型：Term Frequency (TF) 特徵提取</i>
-        </p>
-    </div>
-    """
-    
+    html += "</table></div>"
     return html
+
+# 🆕 3. 會考題庫爬蟲 (突破 iframe 終極版)
+@app.route('/crawl_exams')
+def crawl_exams():
+    print("啟動 Selenium 爬蟲 (歷屆會考)...")
+    options = Options()
+    # ⚠️ 測試成功後，記得把 headless 註解拿掉，讓它乖乖在背景跑
+    # options.add_argument("--headless=new") 
+    options.add_argument("--window-size=1920,1080")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-gpu")
+
+    driver = webdriver.Chrome(options=options)
+    
+    try:
+        driver.get("https://cap.rcpet.edu.tw/examination.html")
+        time.sleep(3) 
+        
+        ExamPaper.query.delete() # 清空舊資料
+        
+        select_element = driver.find_element(By.TAG_NAME, "select")
+        select = Select(select_element)
+        options_count = len(select.options)
+        
+        count = 0
+        for i in range(options_count):
+            select = Select(driver.find_element(By.TAG_NAME, "select"))
+            year_text = select.options[i].text 
+            select.select_by_index(i)
+            time.sleep(2) # 等待 iframe 裡面的新網頁載入
+            
+            try:
+                # 👑 破關核心 1：切換進入名為 "iframe" 的畫中畫世界！
+                driver.switch_to.frame("iframe")
+                
+                # 進入 iframe 後，裡面很乾淨，只有這年的考題。
+                # 直接抓第一個包含「數學科」的連結 (完美避開你說的那年有兩個的狀況)
+                math_link = driver.find_element(By.XPATH, "//a[contains(., '數學科')]")
+                pdf_url = math_link.get_attribute("href")
+                
+                if pdf_url:
+                    new_paper = ExamPaper(year=year_text, pdf_url=pdf_url)
+                    db.session.add(new_paper)
+                    count += 1
+                    print(f"✅ {year_text} 成功！網址: {pdf_url}")
+                    
+            except Exception as e:
+                print(f"⚠️ {year_text} 找不到連結或發生錯誤: {e}")
+                
+            finally:
+                # 👑 破關核心 2：做完事必須「退回主網頁」！
+                # 不然下一次迴圈機器人會找不到外面的下拉選單，直接報錯當機。
+                driver.switch_to.default_content()
+                
+        db.session.commit()
+        return f"Crawl Success! 機器人成功破解 iframe，共抓到 {count} 份考題！"
+
+    except Exception as e:
+        return f"題庫爬蟲發生錯誤：{e}"
+    finally:
+        driver.quit()
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)
