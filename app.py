@@ -54,7 +54,7 @@ def favorites():
     return render_template('favorites.html')
 
 @app.route('/exams')
-def exams():  # 直接把原本的 exams_page 改成 exams
+def exams(): 
     papers = ExamPaper.query.order_by(ExamPaper.id.desc()).all()
     return render_template('exams.html', papers=papers)
 
@@ -156,13 +156,10 @@ def analyze_data():
     html += "</table></div>"
     return html
 
-# 🆕 3. 會考題庫爬蟲 (突破 iframe 終極版)
 @app.route('/crawl_exams')
 def crawl_exams():
     print("啟動 Selenium 爬蟲 (歷屆會考)...")
     options = Options()
-    # ⚠️ 測試成功後，記得把 headless 註解拿掉，讓它乖乖在背景跑
-    # options.add_argument("--headless=new") 
     options.add_argument("--window-size=1920,1080")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
@@ -174,7 +171,7 @@ def crawl_exams():
         driver.get("https://cap.rcpet.edu.tw/examination.html")
         time.sleep(3) 
         
-        ExamPaper.query.delete() # 清空舊資料
+        ExamPaper.query.delete() 
         
         select_element = driver.find_element(By.TAG_NAME, "select")
         select = Select(select_element)
@@ -185,14 +182,11 @@ def crawl_exams():
             select = Select(driver.find_element(By.TAG_NAME, "select"))
             year_text = select.options[i].text 
             select.select_by_index(i)
-            time.sleep(2) # 等待 iframe 裡面的新網頁載入
+            time.sleep(2) 
             
             try:
-                # 👑 破關核心 1：切換進入名為 "iframe" 的畫中畫世界！
                 driver.switch_to.frame("iframe")
                 
-                # 進入 iframe 後，裡面很乾淨，只有這年的考題。
-                # 直接抓第一個包含「數學科」的連結 (完美避開你說的那年有兩個的狀況)
                 math_link = driver.find_element(By.XPATH, "//a[contains(., '數學科')]")
                 pdf_url = math_link.get_attribute("href")
                 
@@ -206,8 +200,6 @@ def crawl_exams():
                 print(f"⚠️ {year_text} 找不到連結或發生錯誤: {e}")
                 
             finally:
-                # 👑 破關核心 2：做完事必須「退回主網頁」！
-                # 不然下一次迴圈機器人會找不到外面的下拉選單，直接報錯當機。
                 driver.switch_to.default_content()
                 
         db.session.commit()
